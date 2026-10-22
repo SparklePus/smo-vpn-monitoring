@@ -1,0 +1,231 @@
+@startuml
+title Вариант 25 — диаграмма классов модели мониторинга VPN
+skinparam classAttributeIconSize 0
+left to right direction
+
+class SimulationConfig {
+  - sourceCount : int
+  - arrivalRate : double
+  - workerCount : int
+  - bufferCapacity : int
+  - minServiceTime : double
+  - maxServiceTime : double
+  - maxRequests : int
+  - randomSeed : long
+  + validate() : void
+  + getSourceCount() : int
+  + getArrivalRate() : double
+  + getWorkerCount() : int
+  + getBufferCapacity() : int
+  + getMinServiceTime() : double
+  + getMaxServiceTime() : double
+  + getMaxRequests() : int
+  + getRandomSeed() : long
+}
+
+class SimulationEngine {
+  - config : SimulationConfig
+  - sources : List<Source>
+  - calendar : EventCalendar
+  - buffer : Buffer
+  - inputDispatcher : InputDispatcher
+  - outputDispatcher : OutputDispatcher
+  - workers : List<Worker>
+  - statistics : StatisticsCollector
+  - eventLog : List<String>
+  - modelTime : double
+  - generatedCount : int
+  + initialize() : void
+  + step() : void
+  + runAutomatic() : void
+  + handleArrival(event : SimulationEvent) : void
+  + handleServiceCompletion(event : SimulationEvent) : void
+  + getCalendarSnapshot() : List<SimulationEvent>
+  + getBufferSnapshot() : Request[]
+  + getWorkerStates() : List<String>
+  + getEventLog() : List<String>
+  + getStatisticsSummary() : String
+  + getModelTime() : double
+}
+
+class EventCalendar {
+  - events : PriorityQueue<SimulationEvent>
+  - nextOrder : long
+  + schedule(time : double, type : EventType, sourceId : int, workerId : int) : void
+  + pollNext() : SimulationEvent
+  + isEmpty() : boolean
+  + snapshot() : List<SimulationEvent>
+}
+
+class SimulationEvent {
+  - time : double
+  - type : EventType
+  - sourceId : int
+  - workerId : int
+  - order : long
+  + getTime() : double
+  + getType() : EventType
+  + getSourceId() : int
+  + getWorkerId() : int
+  + getOrder() : long
+}
+
+class Source {
+  - id : int
+  - lambda : double
+  - nextRequestNumber : int
+  - random : Random
+  + generateRequest(time : double, requestId : long) : Request
+  + sampleNextInterarrival() : double
+  + getId() : int
+}
+
+class Request {
+  - id : long
+  - sourceId : int
+  - sequenceNumber : int
+  - createdAt : double
+  - bufferedAt : double
+  - serviceStartedAt : double
+  - completedAt : double
+  - pingMs : double
+  - packetLossPercent : double
+  - cpuPercent : double
+  - ramPercent : double
+  - activeConnections : int
+  - trafficMbps : double
+  - reachable : boolean
+  - status : RequestStatus
+  - vpnStatus : VpnStatus
+  + markBuffered(time : double) : void
+  + markProcessing(time : double) : void
+  + markCompleted(time : double, vpnStatus : VpnStatus) : void
+  + markRejected(time : double) : void
+  + waitingTime() : double
+  + serviceTime() : double
+  + systemTime() : double
+  + getId() : long
+  + getSourceId() : int
+  + getSequenceNumber() : int
+  + getCreatedAt() : double
+  + getPingMs() : double
+  + getPacketLossPercent() : double
+  + getCpuPercent() : double
+  + getRamPercent() : double
+  + getActiveConnections() : int
+  + getTrafficMbps() : double
+  + isReachable() : boolean
+  + getVpnStatus() : VpnStatus
+}
+
+class Buffer {
+  - slots : Request[]
+  - capacity : int
+  + insertFirstFree(request : Request) : int
+  + evictOldest() : Request
+  + takeNewest() : Request
+  + isEmpty() : boolean
+  + isFull() : boolean
+  + snapshot() : Request[]
+}
+
+class InputDispatcher {
+  - buffer : Buffer
+  - statistics : StatisticsCollector
+  - eventLog : List<String>
+  + acceptRequest(request : Request, time : double) : Request
+}
+
+class OutputDispatcher {
+  - buffer : Buffer
+  - workers : List<Worker>
+  - calendar : EventCalendar
+  - statistics : StatisticsCollector
+  - eventLog : List<String>
+  + dispatchAvailable(time : double) : void
+  - findFirstFreeWorkerById() : Worker
+}
+
+class Worker {
+  - id : int
+  - currentRequest : Request
+  - busySince : double
+  - totalBusyTime : double
+  - minServiceTime : double
+  - maxServiceTime : double
+  - random : Random
+  + isFree() : boolean
+  + startService(request : Request, time : double) : double
+  + completeService(time : double) : Request
+  + getId() : int
+  + getTotalBusyTime() : double
+  - analyzeMetrics(request : Request) : VpnStatus
+}
+
+class StatisticsCollector {
+  - generatedBySource : Map<Integer, Integer>
+  - rejectedBySource : Map<Integer, Integer>
+  - completedBySource : Map<Integer, Integer>
+  - waitTotalsBySource : Map<Integer, Double>
+  - serviceTotalsBySource : Map<Integer, Double>
+  - systemTotalsBySource : Map<Integer, Double>
+  + recordGenerated(request : Request) : void
+  + recordRejected(request : Request) : void
+  + recordServiceStart(request : Request, worker : Worker, time : double) : void
+  + recordCompleted(request : Request, worker : Worker, time : double) : void
+  + rejectionProbability(sourceId : int) : double
+  + utilization(worker : Worker, totalTime : double) : double
+  + summaryTable(totalTime : double) : String
+}
+
+class ConsoleUI {
+  - engine : SimulationEngine
+  + start() : void
+  + runAutomatic() : void
+  + runStepByStep() : void
+  + printCurrentState() : void
+  + printFinalReport() : void
+}
+
+enum EventType {
+  ARRIVAL
+  SERVICE_COMPLETION
+}
+enum RequestStatus {
+  CREATED
+  BUFFERED
+  PROCESSING
+  COMPLETED
+  REJECTED
+}
+enum VpnStatus {
+  UNKNOWN
+  AVAILABLE
+  DEGRADED
+  OVERLOADED
+  UNAVAILABLE
+}
+
+SimulationEngine "1" --> "1" SimulationConfig : config
+SimulationEngine "1" o-- "1..*" Source : sources
+SimulationEngine "1" --> "1" EventCalendar : calendar
+SimulationEngine "1" --> "1" Buffer : shared buffer
+SimulationEngine "1" --> "1" InputDispatcher : input
+SimulationEngine "1" --> "1" OutputDispatcher : output
+SimulationEngine "1" o-- "1..*" Worker : workers
+SimulationEngine "1" --> "1" StatisticsCollector : statistics
+EventCalendar "1" o-- "0..*" SimulationEvent : events
+SimulationEvent --> EventType
+Source ..> Request : generates
+Buffer "1" o-- "0..*" Request : queued requests
+InputDispatcher "1" --> "1" Buffer : writes / evicts
+InputDispatcher "1" --> "1" StatisticsCollector : rejected request
+OutputDispatcher "1" --> "1" Buffer : reads LIFO
+OutputDispatcher "1" --> "1..*" Worker : chooses by id
+OutputDispatcher "1" --> "1" EventCalendar : schedules completion
+OutputDispatcher "1" --> "1" StatisticsCollector : service metrics
+Worker "1" --> "0..1" Request : current request
+Request --> RequestStatus
+Request --> VpnStatus
+ConsoleUI --> SimulationEngine : commands / state
+@enduml

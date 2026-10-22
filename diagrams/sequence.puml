@@ -1,0 +1,138 @@
+@startuml
+title Вариант 25 — полный сценарий обработки снимков VPN-узлов
+hide footbox
+autonumber
+
+participant "SimulationEngine" as Engine
+queue "EventCalendar" as Cal
+participant "Source\n(агент VPN)" as Src
+control "InputDispatcher\n(ДП)" as DP
+queue "Buffer\n(Д1ОЗ3 / Д1ОО3)" as Buf
+control "OutputDispatcher\n(ДВ)" as DV
+participant "Worker\n(прибор)" as W
+participant "StatisticsCollector" as Stats
+
+note over Src, Buf
+ИБ — бесконечные источники; ИЗ1 — пуассоновский поток:
+интервал между поступлениями имеет экспоненциальное распределение.
+Д1ОЗ3 — первая свободная ячейка от начала буфера, без сдвига.
+Д1ОО3 — при переполнении выбивается самая старая заявка.
+end note
+note over DV, W
+Д2Б2 — LIFO: выбирается самая новая заявка.
+Д2П1 — выбирается первый свободный Worker по возрастанию номера.
+ПЗ2 — время обслуживания равномерно распределено на [a; b].
+end note
+note over Engine, Cal
+Для наглядности сценария показаны один Worker и две ячейки буфера.
+Это пример трассы, а не фиксированные параметры программы.
+Все размеры и интенсивности задаются конфигурацией.
+end note
+
+== A. Happy Flow: буфер и Worker свободны ==
+Engine -> Cal: pollNext()
+Cal --> Engine: ARRIVAL(t0, sourceId)
+Engine -> Src: generateRequest(t0, requestId)
+Src --> Engine: r1 с метриками VPN
+Engine -> Stats: recordGenerated(r1)
+Engine -> Src: sampleNextInterarrival() [ИЗ1]
+Src --> Engine: delta ~ Exp(lambda)
+Engine -> Cal: schedule(ARRIVAL, t0 + delta, sourceId)
+Engine -> DP: acceptRequest(r1, t0)
+DP -> Buf: insertFirstFree(r1) [Д1ОЗ3]
+Buf --> DP: slot = 1
+DP --> Engine: заявка помещена в буфер
+Engine -> DV: dispatchAvailable(t0) [триггер: ARRIVAL]
+DV -> DV: findFirstFreeWorkerById() [Д2П1]
+DV --> DV: Worker 1 — первый свободный
+DV -> Buf: takeNewest() [Д2Б2 / LIFO]
+Buf --> DV: r1
+DV -> W: startService(r1, t0)
+W --> DV: started; d ~ Uniform[a, b] [ПЗ2]
+DV -> Stats: recordServiceStart(r1, W, t0)
+DV -> Cal: schedule(SERVICE_COMPLETION, t0 + d, workerId)
+DV --> Engine: обслуживание r1 запланировано
+
+== B. Новые заявки поступают, пока Worker занят ==
+loop ARRIVAL r2, затем ARRIVAL r3 до освобождения Worker
+  Engine -> Cal: pollNext()
+  Cal --> Engine: ARRIVAL(t, sourceId)
+  Engine -> Src: generateRequest(t, requestId)
+  Src --> Engine: r2 или r3 с метриками VPN
+  Engine -> Stats: recordGenerated(request)
+  Engine -> Src: sampleNextInterarrival() [ИЗ1]
+  Src --> Engine: delta ~ Exp(lambda)
+  Engine -> Cal: schedule(следующий ARRIVAL)
+  Engine -> DP: acceptRequest(request, t)
+  DP -> Buf: insertFirstFree(request) [Д1ОЗ3]
+  Buf --> DP: первая свободная ячейка
+  DP --> Engine: заявка сохранена
+  Engine -> DV: dispatchAvailable(t) [триггер: ARRIVAL]
+  DV -> DV: findFirstFreeWorkerById() [Д2П1]
+  DV --> DV: null — все Worker заняты
+  DV --> Engine: заявка остаётся в буфере
+end
+
+== C. Буфер заполнен: новая r4 вытесняет старую r2 ==
+Engine -> Cal: pollNext()
+Cal --> Engine: ARRIVAL(t4, sourceId)
+Engine -> Src: generateRequest(t4, requestId)
+Src --> Engine: r4 с метриками VPN
+Engine -> Stats: recordGenerated(r4)
+Engine -> Src: sampleNextInterarrival() [ИЗ1]
+Src --> Engine: delta ~ Exp(lambda)
+Engine -> Cal: schedule(следующий ARRIVAL)
+Engine -> DP: acceptRequest(r4, t4)
+DP -> Buf: insertFirstFree(r4) [Д1ОЗ3]
+alt В буфере есть свободная ячейка
+  Buf --> DP: slot = первая свободная позиция
+  DP --> Engine: r4 сохранена; вытеснения нет
+else Буфер заполнен (сценарий r4)
+  Buf --> DP: FULL — свободных ячеек нет
+  DP -> Buf: evictOldest() [Д1ОО3]
+  Buf --> DP: r2 — самая старая заявка
+  DP -> Stats: recordRejected(r2)
+  note right of Stats
+  Отказ получает старая r2.
+  Новая r4 принимается.
+  Worker не отказывает заявкам — он может быть занят.
+  end note
+  DP -> Buf: insertFirstFree(r4) [Д1ОЗ3]
+  Buf --> DP: r4 записана в освободившуюся ячейку
+  DP --> Engine: r4 сохранена; r2 выбита
+end
+Engine -> DV: dispatchAvailable(t4) [триггер: ARRIVAL]
+DV -> DV: findFirstFreeWorkerById() [Д2П1]
+DV --> DV: null — все Worker заняты
+DV --> Engine: r3 и r4 ожидают в буфере
+
+== D. Worker освободился: из буфера выбирается самая новая заявка ==
+Engine -> Cal: pollNext()
+Cal --> Engine: SERVICE_COMPLETION(t5, workerId)
+Engine -> W: completeService(t5)
+W --> Engine: r1 завершена; VPN-статус определён; Worker свободен
+Engine -> Stats: recordCompleted(r1, t5)
+Engine -> DV: dispatchAvailable(t5) [триггер: SERVICE_COMPLETION]
+DV -> DV: findFirstFreeWorkerById() [Д2П1]
+DV --> DV: Worker 1 — первый свободный
+alt В буфере есть заявки (r3, r4)
+  DV -> Buf: takeNewest() [Д2Б2 / LIFO]
+  Buf --> DV: r4 — новее r3
+  DV -> W: startService(r4, t5)
+  W --> DV: started; d2 ~ Uniform[a, b] [ПЗ2]
+  DV -> Stats: recordServiceStart(r4, W, t5)
+  DV -> Cal: schedule(SERVICE_COMPLETION, t5 + d2, workerId)
+  DV --> Engine: r4 обрабатывается; r3 остаётся ждать
+else Буфер пуст
+  DV -> Buf: isEmpty()
+  Buf --> DV: true
+  DV --> Engine: Worker остаётся свободным
+end
+
+note over Engine, Cal
+ОД1: в пошаговом режиме показываются календарь событий,
+содержимое буфера, занятость Worker и процент отказов.
+ОР1: в конце формируется сводная таблица по источникам и Worker.
+Кольцевые указатели не используются: они не предусмотрены вариантом 25.
+end note
+@enduml

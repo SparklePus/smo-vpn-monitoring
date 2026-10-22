@@ -1,0 +1,51 @@
+@startuml
+title Вариант 25 — подпроцесс A: генерация и постановка заявки
+|SimulationEngine|
+start
+:Получить событие ARRIVAL(time, sourceId);
+|Source|
+:generateRequest(time, requestId);
+:Создать снимок виртуальных метрик VPN;
+|StatisticsCollector|
+:recordGenerated(request);
+|SimulationEngine|
+if (Достигнут maxRequests?) then (нет)
+  |Source|
+  :sampleNextInterarrival() — Exp(lambda), ИЗ1;
+  |EventCalendar|
+  :schedule(next ARRIVAL);
+else (да)
+  |SimulationEngine|
+  :Не планировать новый ARRIVAL;
+endif
+|InputDispatcher|
+:acceptRequest(request, time);
+|Buffer|
+:insertFirstFree(request) — Д1ОЗ3;
+if (Есть первая свободная ячейка?) then (да)
+  :Поместить новую заявку без сдвига;
+  |InputDispatcher|
+  :Пометить заявку BUFFERED;
+else (нет, буфер заполнен)
+  :evictOldest() — Д1ОО3;
+  :Выбрать заявку с минимальным временем поступления;
+  |InputDispatcher|
+  :Пометить старую заявку REJECTED;
+  |StatisticsCollector|
+  :recordRejected(старая заявка);
+  |Buffer|
+  :Поместить новую заявку в освободившуюся ячейку;
+  |InputDispatcher|
+  :Пометить новую заявку BUFFERED;
+endif
+|SimulationEngine|
+:Записать генерацию, размещение
+и возможное вытеснение в историю событий;
+:Вызвать OutputDispatcher — триггер ARRIVAL;
+note right
+ДП имеет ссылку на Buffer и StatisticsCollector.
+ДП не знает о Worker и не назначает обслуживание.
+При Д1ОО3 отказ получает старая заявка, новая сохраняется.
+end note
+stop
+@enduml

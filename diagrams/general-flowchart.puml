@@ -1,0 +1,101 @@
+@startuml
+title Вариант 25 — общий алгоритм событийного моделирования с дорожками
+skinparam activity {
+  BackgroundColor #FFFFFF
+  BorderColor #8FA8BE
+  DiamondBackgroundColor #F3F7FB
+  DiamondBorderColor #8FA8BE
+  StartColor #3C78A8
+  EndColor #3C78A8
+}
+|ConsoleUI|
+start
+:Создать SimulationConfig;
+:Выбрать автоматический или пошаговый режим;
+|SimulationEngine|
+:Проверить конфигурацию;
+:Создать источники, общий буфер,
+Worker, диспетчеры и сборщик статистики;
+:Установить modelTime = 0;
+|EventCalendar|
+:Запланировать первый ARRIVAL
+для каждого источника;
+|SimulationEngine|
+while (В календаре есть события?) is (да)
+  |EventCalendar|
+  :Извлечь ближайшее событие pollNext();
+  |SimulationEngine|
+  :modelTime = event.time;
+  if (event.type = ARRIVAL?) then (да)
+    |Source|
+    :Сгенерировать Request
+со снимком виртуальных метрик VPN;
+    |StatisticsCollector|
+    :recordGenerated(request);
+    |SimulationEngine|
+    if (generatedCount < maxRequests?) then (да)
+      |Source|
+      :Вычислить следующий интервал
+Exp(lambda) по ИЗ1;
+      |EventCalendar|
+      :Запланировать следующий ARRIVAL;
+    else (нет)
+      |SimulationEngine|
+      :Больше не планировать ARRIVAL;
+    endif
+    |InputDispatcher|
+    :acceptRequest(request, modelTime);
+    |Buffer|
+    :insertFirstFree() по Д1ОЗ3;
+    if (Есть свободная ячейка?) then (да)
+      :Сохранить заявку в первой свободной ячейке;
+    else (нет)
+      :evictOldest() по Д1ОО3;
+      |StatisticsCollector|
+      :Учесть отказ самой старой заявки;
+      |Buffer|
+      :Поместить новую заявку
+в освободившуюся ячейку;
+    endif
+  else (SERVICE_COMPLETION)
+    |Worker|
+    :Завершить обслуживание;
+    :Определить состояние VPN-узла;
+    :Освободить Worker;
+    |StatisticsCollector|
+    :Учесть результат и время обслуживания;
+  endif
+  |OutputDispatcher|
+  :dispatchAvailable(modelTime)
+после ARRIVAL или SERVICE_COMPLETION;
+  note right
+  Пока есть заявки и свободные Worker:
+  1. выбрать Worker с минимальным номером (Д2П1);
+  2. извлечь самую новую заявку (Д2Б2 / LIFO);
+  3. запустить обслуживание с Uniform[a,b] (ПЗ2);
+  4. добавить SERVICE_COMPLETION в календарь.
+  end note
+  |SimulationEngine|
+  :Добавить действия в историю событий;
+  if (Пошаговый режим?) then (да)
+    |ConsoleUI|
+    :Показать календарь, буфер, Worker
+и процент отказов (ОД1);
+    |SimulationEngine|
+  else (нет)
+    :Продолжить автоматически;
+  endif
+endwhile (нет)
+|StatisticsCollector|
+:Сформировать сводную таблицу ОР1;
+|ConsoleUI|
+:Показать итоговые результаты;
+stop
+legend
+Модель использует виртуальное время и особые события,
+а не реальные потоки и Thread.sleep().
+После maxRequests генерация прекращается; заявки,
+которые уже в системе, продолжают обслуживаться.
+Кольцевых указателей в варианте 25 нет.
+endlegend
+@enduml

@@ -1,0 +1,39 @@
+@startuml
+title Вариант 25 — подпроцесс B: выбор заявки и запуск Worker
+|SimulationEngine|
+start
+:Триггер: заявка помещена в буфер
+ИЛИ поступило SERVICE_COMPLETION;
+|OutputDispatcher|
+while (Есть заявка в буфере И свободен Worker?) is (да)
+  :Найти первого свободного Worker
+по возрастанию номера — Д2П1;
+  |Buffer|
+  :takeNewest() — Д2Б2 / LIFO;
+  :Выбрать заявку с максимальным временем поступления;
+  :Удалить её из ячейки без сдвига;
+  |OutputDispatcher|
+  :Передать заявку выбранному Worker;
+  |Worker|
+  :startService(request, time);
+  :Выбрать длительность Uniform[a,b] — ПЗ2;
+  :Пометить заявку PROCESSING;
+  |StatisticsCollector|
+  :Учесть ожидание и начало обслуживания;
+  |EventCalendar|
+  :Запланировать SERVICE_COMPLETION(time + duration);
+  |SimulationEngine|
+  :Записать извлечение, назначение
+и начало обслуживания в историю событий;
+  |OutputDispatcher|
+endwhile (нет)
+|SimulationEngine|
+:Вернуться к обработке следующего события;
+note right
+Если буфер пуст или все Worker заняты,
+диспетчер завершает текущую проверку.
+При завершении обслуживания движок снова вызывает ДВ.
+Приборы не отказывают заявкам — они бывают заняты.
+end note
+stop
+@enduml
